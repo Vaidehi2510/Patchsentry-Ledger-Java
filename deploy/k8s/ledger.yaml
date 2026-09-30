@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-config
+data:
+  DATABASE_URL: jdbc:postgresql://postgres:5432/ledger
+  DATABASE_USERNAME: ledger
+  MONGODB_URI: mongodb://mongo:27017/ledger
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  SPRING_FLYWAY_CONNECT_RETRIES: "10"
+  LEDGER_RATE_LIMIT_PER_MINUTE: "120"
+  LEDGER_SCORING_POLICY: required-checks
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  labels:
+    app: ledger
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ledger
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: ledger
+    spec:
+      # Without this, the `redis` Service injects REDIS_PORT=tcp://<ip>:6379, which
+      # overrides ${REDIS_PORT:6379} and fails binding spring.data.redis.port (int).
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: ledger
+          image: patchsentry-ledger:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ledger-config
+          env:
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-secrets
+                  key: database-password
+            - name: LEDGER_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ledger-secrets
+                  key: admin-token
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 768Mi
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger
+spec:
+  selector:
+    app: ledger
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ledger
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ledger
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ledger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ledger

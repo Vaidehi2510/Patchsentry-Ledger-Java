@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Build and test (JUnit, Mockito, Testcontainers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build and run all tests
+        run: mvn -B verify
+
+  kubernetes:
+    name: Deploy to Kubernetes (kind) and smoke test
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_TOKEN: ci-admin-token-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t patchsentry-ledger:local .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ledger
+      - name: Load image into the cluster
+        run: kind load docker-image patchsentry-ledger:local --name ledger
+      - name: Deploy
+        run: |
+          kubectl apply -f deploy/k8s/namespace.yaml
+          kubectl -n patchsentry create secret generic ledger-secrets \
+            --from-literal=admin-token="$ADMIN_TOKEN" \
+            --from-literal=database-password="ci-db-password"
+          kubectl apply -k deploy/k8s
+          for app in postgres mongo redis ledger; do
+            kubectl -n patchsentry rollout status "deploy/$app" --timeout=300s
+          done
+      - name: Smoke test through the Service
+        run: |
+          kubectl -n patchsentry port-forward svc/ledger 8080:80 >/tmp/port-forward.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://localhost:8080/actuator/health/readiness && break; sleep 2; done
+          LEDGER_ADMIN_TOKEN="$ADMIN_TOKEN" bash scripts/smoke.sh
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl -n patchsentry get pods -o wide
+          kubectl -n patchsentry describe deploy/ledger
+          kubectl -n patchsentry logs deploy/ledger --tail=200

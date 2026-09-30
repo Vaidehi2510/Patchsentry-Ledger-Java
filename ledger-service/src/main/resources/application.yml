@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: patchsentry-ledger
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ledger}
+    username: ${DATABASE_USERNAME:ledger}
+    password: ${DATABASE_PASSWORD:ledger}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none   # Flyway owns the schema
+  flyway:
+    enabled: true
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/ledger}
+      auto-index-creation: true
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false
+  jackson:
+    default-property-inclusion: non_null
+    mapper:
+      accept-case-insensitive-enums: true
+  mvc:
+    problemdetails:
+      enabled: true
+
+server:
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,mongo,redis
+
+ledger:
+  admin-token: ${LEDGER_ADMIN_TOKEN:}
+  rate-limit-per-minute: ${LEDGER_RATE_LIMIT_PER_MINUTE:120}
+  scoring-policy: ${LEDGER_SCORING_POLICY:required-checks}

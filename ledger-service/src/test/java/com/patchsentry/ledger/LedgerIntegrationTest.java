@@ -211,6 +211,22 @@ class LedgerIntegrationTest {
         assertThat(limited).isPositive();
     }
 
+    private String sha(String text) throws Exception {return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+
+    @Test
+    void portalNativeArchivesPreserveBuildsAndAreScopedImmutableAndIdempotent() throws Exception {
+        String repository=newRepository();var project=createProject(repository);String token=issueToken(project).get("token").asText(),recordId=newRecordId();
+        var body=(com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(report(recordId,repository,REVISION,"passed"));
+        body.put("phase","completed");body.put("completedAt","2026-10-30T12:00:00Z");body.remove("pr");var target=body.putObject("target");target.put("kind","release");target.put("name","v1");target.put("platform","web");target.put("artifactSha256","d".repeat(64));String bytes=json.writeValueAsString(body),digest=sha(bytes),url="/api/runner/assessments/"+recordId+"/"+digest;
+        mvc.perform(get("/api/runner/project").header(AUTHORIZATION,"Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.repository").value(repository)).andExpect(jsonPath("$.capabilities[0]").value("assessment-archive-v1"));
+        mvc.perform(put(url).header(AUTHORIZATION,"Bearer "+token).contentType(APPLICATION_JSON).content(bytes)).andExpect(status().isOk()).andExpect(jsonPath("$.payloadDigest").value(digest)).andExpect(jsonPath("$.duplicate").value(false));
+        mvc.perform(put(url).header(AUTHORIZATION,"Bearer "+token).contentType(APPLICATION_JSON).content(bytes)).andExpect(status().isOk()).andExpect(jsonPath("$.duplicate").value(true));
+        mvc.perform(get(url).header(AUTHORIZATION,"Bearer "+token)).andExpect(status().isOk());
+        String other=issueToken(createProject(newRepository())).get("token").asText();mvc.perform(get(url).header(AUTHORIZATION,"Bearer "+other)).andExpect(status().isNotFound());
+        String second=issueToken(project).get("token").asText();mvc.perform(put(url).header(AUTHORIZATION,"Bearer "+second).contentType(APPLICATION_JSON).content(bytes+" ")).andExpect(status().isBadRequest());
+        body.put("revision","b2".repeat(20));String changed=json.writeValueAsString(body);mvc.perform(put("/api/runner/assessments/"+recordId+"/"+sha(changed)).header(AUTHORIZATION,"Bearer "+second).contentType(APPLICATION_JSON).content(changed)).andExpect(status().isConflict());
+    }
+
     @Test
     void readinessReportsAllThreeBackingStores() throws Exception {
         mvc.perform(get("/actuator/health/readiness"))

@@ -82,3 +82,11 @@ CI (`.github/workflows/ci.yml`) runs `mvn verify`, builds the image, creates a k
 * A transactional outbox for the MongoDB write, instead of relying on retries.
 * OpenAPI docs, Spring Security with OAuth2 for the admin API, and Micrometer metrics.
 * Terraform for EKS with RDS, DocumentDB, and ElastiCache.
+
+## Portal-native assessment archive
+
+The website's **Pilot & Ledger** view now has its own encrypted assessment receipt chain. This service can hold an additional company-owned copy after it is deployed and explicitly connected. It does not replace the execution engine or authorize releases merely because a report was stored.
+
+Scoped runner tokens now support `GET /api/runner/project` and `PUT`/`GET /api/runner/assessments/{recordId}/{payloadDigest}`. The digest is SHA-256 of the exact request body bytes. Completed portal-native PRs, builds and releases are retained without converting builds into fake PRs. Exact retries are idempotent; another payload digest creates a new version, and an existing record cannot change source/subject identity. Database triggers reject updates to archived snapshots. An administrator who controls the database remains outside this integrity boundary.
+
+Issue only a project-scoped `psl_` runner token to the website. Never configure its global admin token there. The website operator must approve the exact HTTPS origin using `LEDGER_ALLOWED_ORIGINS`, and the product owner must explicitly approve report transfer. Each copy has its own retention and access policy. The archive acknowledges storage of bytes, not independent execution, correctness or build provenance. The legacy PR-scoring endpoints remain unchanged.

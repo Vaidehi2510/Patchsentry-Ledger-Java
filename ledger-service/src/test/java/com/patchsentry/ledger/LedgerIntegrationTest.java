@@ -222,6 +222,7 @@ class LedgerIntegrationTest {
         mvc.perform(put(url).header(AUTHORIZATION,"Bearer "+token).contentType(APPLICATION_JSON).content(bytes)).andExpect(status().isOk()).andExpect(jsonPath("$.payloadDigest").value(digest)).andExpect(jsonPath("$.duplicate").value(false));
         mvc.perform(put(url).header(AUTHORIZATION,"Bearer "+token).contentType(APPLICATION_JSON).content(bytes)).andExpect(status().isOk()).andExpect(jsonPath("$.duplicate").value(true));
         mvc.perform(get(url).header(AUTHORIZATION,"Bearer "+token)).andExpect(status().isOk());
+        assertThat(mvc.perform(get(url+"/payload").header(AUTHORIZATION,"Bearer "+token)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).isEqualTo(bytes);
         String other=issueToken(createProject(newRepository())).get("token").asText();mvc.perform(get(url).header(AUTHORIZATION,"Bearer "+other)).andExpect(status().isNotFound());
         String second=issueToken(project).get("token").asText();mvc.perform(put(url).header(AUTHORIZATION,"Bearer "+second).contentType(APPLICATION_JSON).content(bytes+" ")).andExpect(status().isBadRequest());
         body.put("revision","b2".repeat(20));String changed=json.writeValueAsString(body);mvc.perform(put("/api/runner/assessments/"+recordId+"/"+sha(changed)).header(AUTHORIZATION,"Bearer "+second).contentType(APPLICATION_JSON).content(changed)).andExpect(status().isConflict());

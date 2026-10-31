@@ -92,3 +92,7 @@ Scoped runner tokens now support `GET /api/runner/project` and `PUT`/`GET /api/r
 Issue only a project-scoped `psl_` runner token to the website. Never configure its global admin token there. The website operator must approve the exact HTTPS origin using `LEDGER_ALLOWED_ORIGINS`, and the product owner must explicitly approve report transfer. Each copy has its own retention and access policy. The archive acknowledges storage of bytes, not independent execution, correctness or build provenance. The legacy PR-scoring endpoints remain unchanged.
 
 The scoped `GET /api/runner/assessments/{recordId}/{payloadDigest}/payload` endpoint exports the exact stored JSON bytes after verifying SHA-256. It uses private/no-store headers and never exposes another project’s archive. Website retention does not implicitly restore copies from the separate archive.
+
+## License
+
+Patchsentry Ledger is available under the [MIT License](LICENSE).

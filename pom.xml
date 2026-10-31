@@ -18,6 +18,14 @@
     <name>Patchsentry Ledger</name>
     <description>Java service that ingests, scores, and serves Patchsentry QA run reports.</description>
 
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/license/mit/</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <properties>
         <java.version>21</java.version>
     </properties>

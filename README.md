@@ -1,6 +1,20 @@
 # Patchsentry Ledger
 
-A Java 21 / Spring Boot REST service that ingests, scores, and serves QA run reports from [Patchsentry](https://patchsentry.vercel.app) runners. Postgres holds the relational core, MongoDB holds variable-shape AI evidence, and Redis provides a rate limiter shared by every replica. It ships with Docker, Kubernetes manifests, and a CI pipeline that deploys to a real cluster.
+An optional Java 21 / Spring Boot REST service for storing and retrieving Patchsentry QA reports. Postgres holds the relational core, MongoDB holds variable-shape AI evidence, and Redis provides a rate limiter shared by every replica. It ships with Docker and Kubernetes manifests. Its CI exercises a disposable local **kind** cluster; this project has not deployed a production Java Ledger service.
+
+## Start here for reviewers
+
+To reproduce Patchsentry's defect-detection workflow, begin with the [engine reviewer quick-start](https://github.com/Vaidehi2510/QA-testbot/blob/main/docs/reviewer-quickstart.md). That path runs deterministic fixture tests without an account, model API key or Java deployment. The [public dashboard demo](https://patchsentry.vercel.app/demo) illustrates the report interface with sample data; it is not evidence of tests against a customer product.
+
+Use this repository to inspect the optional storage service and reproduce its Java tests or local ingestion smoke test below. [CI runs](https://github.com/Vaidehi2510/Patchsentry-Ledger-Java/actions/workflows/ci.yml) record execution results for the selected source revision.
+
+| Repository | Role |
+| --- | --- |
+| [QA-testbot](https://github.com/Vaidehi2510/QA-testbot) | Executes configured checks and optional AI-assisted reviews while keeping product source read-only. |
+| [patchsentry-web](https://github.com/Vaidehi2510/patchsentry-web) | Website, project controls, scheduling and reports. Its hosted assessment receipt chain remains authoritative for the website's release decisions. |
+| **Patchsentry-Ledger-Java** (this repository) | Optional company-owned report service and additional assessment archive. Storing a report does not prove its tests ran or authorize a release. |
+
+The website's [Java archive adapter](https://github.com/Vaidehi2510/patchsentry-web/blob/main/src/lib/server/ledger-bridge.ts) is implemented. Activating it requires an explicitly deployed HTTPS service, an operator-approved origin, a project-scoped token and owner transfer consent. Java Ledger is not required for the existing website or the no-key reviewer demo.
 
 ## Architecture
 
@@ -42,40 +56,68 @@ Admin ──/api/admin/*──▶ AdminAuthFilter ─▶ AdminController ─▶ 
 
 Errors use RFC 9457 `application/problem+json`. A validation failure lists every problem in `errors`.
 
-## Run it
+## Reproduce the Java service locally
 
-Requirements: JDK 21, Maven 3.9+, and Docker.
+For the Java test suite, use **JDK 21**, **Maven 3.9+** and a running Docker engine accessible to Testcontainers. The first run downloads Maven dependencies and the public Postgres 16, MongoDB 7 and Redis 7 images. No model-provider or cloud account is required.
 
 ```bash
-mvn verify                      # unit tests + Testcontainers integration tests
-docker compose up --build       # Postgres, MongoDB, Redis, and the service on :8080
+git clone https://github.com/Vaidehi2510/Patchsentry-Ledger-Java.git
+cd Patchsentry-Ledger-Java
+mvn -B verify
+```
+
+`verify` runs the framework-free core tests, mocked service/filter tests and real Testcontainers datastore integration tests. Inspect Maven's reported failures and skipped tests, plus each module's `target/surefire-reports`; a successful build with deliberately skipped tests is not the complete verification path. Use the linked CI run and its source revision when citing observed test counts or outcomes.
+
+To inspect the running API, use Docker Compose v2. The checked-in local Compose configuration exposes Postgres on 5432, MongoDB on 27017, Redis on 6379 and Ledger on 8080, so those ports must be available. The smoke script additionally requires Bash, `curl`, `jq`, `sha256sum` and `sha1sum` in `PATH`.
+
+```bash
+docker compose up --build -d
+curl -fsS http://localhost:8080/actuator/health/readiness
+```
+
+Wait until readiness returns `UP`, then run the synthetic ingestion check. The token below matches the checked-in local development Compose configuration.
+
+```bash
 LEDGER_ADMIN_TOKEN=local-dev-admin-token bash scripts/smoke.sh
+```
+
+Expected final output resembles `Smoke test passed: run <record-prefix> scored 100`. The script creates a synthetic project and scoped token, uploads a synthetic report and queries its stored score. It verifies that ingestion/authentication/query path; it does not execute a product test suite or demonstrate product-wide QA coverage. Stop the local services when finished:
+
+```bash
+docker compose down
 ```
 
 ## Tests
 
 | Suite | What it covers |
 |---|---|
-| `ledger-core` (18, JUnit 5) | Scoring rules and precedence, validation limits, token generation and hashing |
-| `RunIngestServiceTest` (7, Mockito) | Create vs. update, revision binding, cross-repo rejection, Mongo failure rolls back |
-| `RedisRateLimiterTest` (3, Mockito) | Window keys, TTL on first hit, limit edge, fail-open |
-| `RunnerAuthFilterTest` (4, Mockito) | Malformed, unknown, valid, and rate-limited tokens |
-| `LedgerIntegrationTest` (7, Testcontainers) | Real Postgres, MongoDB, and Redis: idempotency, conflicts, auth, revocation, rate limit, readiness |
+| `ledger-core` (JUnit 5) | Scoring rules and precedence, validation limits, token generation and hashing |
+| `RunIngestServiceTest` (Mockito) | Create vs. update, revision binding, cross-repo rejection, Mongo failure rolls back |
+| `RedisRateLimiterTest` (Mockito) | Window keys, TTL on first hit, limit edge, fail-open |
+| `RunnerAuthFilterTest` (Mockito) | Malformed, unknown, valid, and rate-limited tokens |
+| `LedgerIntegrationTest` (Testcontainers) | Real Postgres, MongoDB, and Redis: idempotency, conflicts, auth, revocation, rate limit, readiness and scoped assessment archives |
 
-## Deploy to Kubernetes
+## Reproduce the local Kubernetes rehearsal
+
+This optional path additionally needs `kind`, `kubectl` and `openssl`. It creates a disposable local cluster, not a hosted production service.
 
 ```bash
 docker build -t patchsentry-ledger:local .
-kind create cluster --name ledger && kind load docker-image patchsentry-ledger:local --name ledger
+kind create cluster --name ledger
+kind load docker-image patchsentry-ledger:local --name ledger
 kubectl apply -f deploy/k8s/namespace.yaml
 kubectl -n patchsentry create secret generic ledger-secrets \
   --from-literal=admin-token="$(openssl rand -hex 24)" --from-literal=database-password="$(openssl rand -hex 24)"
 kubectl apply -k deploy/k8s
 ```
 
-The service runs 2 replicas with startup, liveness, and readiness probes, a zero-downtime rolling update, an HPA (2–6 pods at 70% CPU), and a PodDisruptionBudget. It runs as a non-root user with a read-only root filesystem. The JVM sizes its heap from the pod's memory limit (`-XX:MaxRAMPercentage=75`). `datastores.yaml` is for development and CI only. In production, point the ConfigMap at managed Postgres, MongoDB, and Redis.
+The manifests configure 2 replicas, startup/liveness/readiness probes, rolling updates with `maxUnavailable: 0` and `maxSurge: 1`, an HPA (2–6 pods at 70% CPU) and a PodDisruptionBudget. These are configuration settings, not a measured availability or capacity guarantee. The service runs as a non-root user with a read-only root filesystem. The JVM sizes its heap from the pod's memory limit (`-XX:MaxRAMPercentage=75`). `datastores.yaml` is for development and CI only; a company deployment needs separately operated Postgres, MongoDB and Redis plus its own backup, retention and security controls.
 
-CI (`.github/workflows/ci.yml`) runs `mvn verify`, builds the image, creates a kind cluster, deploys, and runs `scripts/smoke.sh` through the Service.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify`, builds the image, creates a disposable kind cluster, deploys and runs `scripts/smoke.sh` through the Service. It does not deploy a Java service behind the public Patchsentry website. Remove your local rehearsal cluster when finished:
+
+```bash
+kind delete cluster --name ledger
+```
 
 ## Next steps
 
@@ -92,6 +134,10 @@ Scoped runner tokens now support `GET /api/runner/project` and `PUT`/`GET /api/r
 Issue only a project-scoped `psl_` runner token to the website. Never configure its global admin token there. The website operator must approve the exact HTTPS origin using `LEDGER_ALLOWED_ORIGINS`, and the product owner must explicitly approve report transfer. Each copy has its own retention and access policy. The archive acknowledges storage of bytes, not independent execution, correctness or build provenance. The legacy PR-scoring endpoints remain unchanged.
 
 The scoped `GET /api/runner/assessments/{recordId}/{payloadDigest}/payload` endpoint exports the exact stored JSON bytes after verifying SHA-256. It uses private/no-store headers and never exposes another project’s archive. Website retention does not implicitly restore copies from the separate archive.
+
+## Contribute
+
+Documentation, reproducibility, API examples, accessibility feedback and tests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and review expectations, the [code of conduct](CODE_OF_CONDUCT.md) for participation, and [SECURITY.md](SECURITY.md) for private vulnerability reporting. Use public issues for non-sensitive reproducibility problems; keep credentials and customer reports out of examples.
 
 ## License
 
